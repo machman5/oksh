@@ -4,6 +4,10 @@
 # and released into the Public Domain.
 
 Makefile() {
+  if [ $strip -ne 0 ] ; then
+    stripopt="-s"
+  fi
+
   if [ -z "$cc" ] ; then
     cc=$CC
   fi
@@ -17,6 +21,13 @@ EOF
 if [ ! -z "$ldflags" ] ; then
 cat << EOF >> Makefile
 LDFLAGS =	$ldflags
+EOF
+fi
+
+if [ ! -z "$vpath" ] ; then
+cat << EOF >> Makefile
+
+VPATH =		$vpath
 EOF
 fi
 
@@ -40,7 +51,7 @@ EOF
 
 if [ $compileonly -eq 0 ] ; then
 cat << EOF >> Makefile
-	\${CC} \${LDFLAGS} -o \${PROG} \${OBJS} $libs
+	\${CC} \${LDFLAGS} -o \${PROG} \${OBJS} $libs \${LIBS}
 EOF
 fi
 
@@ -49,7 +60,7 @@ cat << EOF >> Makefile
 install:
 	install -d \${DESTDIR}\${BINDIR}
 	install -d \${DESTDIR}\${MANDIR}/man1
-	install -c -s -m 755 \${PROG} \${DESTDIR}\${BINDIR}
+	install -c $stripopt -m 755 \${PROG} \${DESTDIR}\${BINDIR}
 	install -c -m 644 \${PROG}.1 \${DESTDIR}\${MANDIR}/man1
 EOF
 
@@ -57,7 +68,7 @@ if [ $instsh -ne 0 ] ; then
 cat << EOF >> Makefile
 	install -d \${DESTDIR}\${BINDIR}
 	install -d \${DESTDIR}\${MANDIR}/man1
-	install -c -s -m 755 \${PROG} \${DESTDIR}\${BINDIR}/sh
+	install -c $stripopt -m 755 \${PROG} \${DESTDIR}\${BINDIR}/sh
 	install -c -m 644 sh.1 \${DESTDIR}\${MANDIR}/man1
 EOF
 fi
@@ -74,6 +85,20 @@ fi
 
 cat << EOF >> Makefile
 
+uninstall:
+	rm -f \${DESTDIR}\${BINDIR}/\${PROG}
+	rm -f \${DESTDIR}\${MANDIR}/man1/\${PROG}.1
+EOF
+
+if [ $instsh -ne 0 ] ; then
+cat << EOF >> Makefile
+	rm -f \${DESTDIR}\${BINDIR}/sh
+	rm -f \${DESTDIR}\${MANDIR}/man1/sh.1
+EOF
+fi
+
+cat << EOF >> Makefile
+
 test:
 	echo "No tests"
 
@@ -81,7 +106,7 @@ clean:
 	rm -f \${PROG} \${OBJS}
 
 distclean: clean
-	rm -f Makefile pconfig.h
+	rm -f Makefile pconfig.h *.core
 EOF
 }
 
@@ -106,8 +131,7 @@ c99check() {
 #include <stdio.h>
 int main(void){long long l;for (int i=0;i<1;i++)printf("%s",__func__);return 0;}
 EOF
-  $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
-  $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
+  $cc $cflags -std=c99 -o conftest.o -c conftest.c > /dev/null 2>&1
   if [ $? -eq 0 ] ; then
     rm -f conftest conftest.o conftest.c
     return 0
@@ -122,8 +146,8 @@ cccheck() {
 cat << EOF > conftest.c
 int main(void){return 0;}
 EOF
-    $CC $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
-    $CC $ldflags -o conftest conftest.o > /dev/null 2>&1
+    $CC $cflags -o conftest.o -c conftest.c
+    $CC $ldflags -o conftest conftest.o
     if [ $? -eq 0 ] ; then
       ./conftest
       if [ $? -eq 0 ] ; then
@@ -140,7 +164,7 @@ EOF
     fi
   fi
 
-  for compiler in cc clang pcc xlc gcc ; do
+  for compiler in cc clang pcc tcc lacc cparser ccomp xlc gcc ; do
 cat << EOF > conftest.c
 int main(void){return 0;}
 EOF
@@ -171,6 +195,27 @@ clockgettimecheck() {
 #include <stdio.h>
 #include <time.h>
 int main(void){clock_gettime(0,NULL);return 0;}
+EOF
+  $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
+  $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
+  if [ $? -eq 0 ] ; then
+    rm -f conftest conftest.o conftest.c
+    return 0
+  else
+    rm -f conftest conftest.o conftest.c
+    return 1
+  fi
+}
+
+clockgettimemacoscheck() {
+  cat << EOF > conftest.c
+int main(void) {
+#if defined(__APPLE__) && defined(__MACH__) && __MAC_OS_X_VERSION_MIN_REQUIRED < 101200
+return 0;
+#else
+return 1;
+#endif
+}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
@@ -222,7 +267,7 @@ cursescheck() {
 #include <curses.h>
 int main(void){setupterm(NULL, 0, NULL);return 0;}
 EOF
-  $cc $cflags -o conftest.o -c conftest.c -lcurses > /dev/null 2>&1
+  $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o -lcurses > /dev/null 2>&1
   if [ $? -eq 0 ] ; then
     rm -f conftest conftest.o conftest.c
@@ -236,7 +281,7 @@ EOF
 deadcheck() {
   cat << EOF > conftest.c
 #include <stdlib.h>
-__dead usage(void){exit(1);}int main(void){usage();return 0;}
+__dead void usage(void){exit(1);}int main(void){usage();return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
@@ -252,7 +297,7 @@ EOF
 dead2check() {
   cat << EOF > conftest.c
 #include <stdlib.h>
-__dead2 usage(void){exit(1);}int main(void){usage();return 0;}
+__dead2 void usage(void){exit(1);}int main(void){usage();return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
@@ -286,6 +331,21 @@ int main(void){getauxval(AT_SECURE);return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
+  if [ $? -eq 0 ] ; then
+    rm -f conftest conftest.o conftest.c
+    return 0
+  else
+    rm -f conftest conftest.o conftest.c
+    return 1
+  fi
+}
+
+gnu99check() {
+  cat << EOF > conftest.c
+#include <stdio.h>
+int main(void){long long l;for (int i=0;i<1;i++)printf("%s",__func__);return 0;}
+EOF
+  $cc $cflags -std=gnu99 -o conftest.o -c conftest.c > /dev/null 2>&1
   if [ $? -eq 0 ] ; then
     rm -f conftest conftest.o conftest.c
     return 0
@@ -360,10 +420,25 @@ EOF
   fi
 }
 
+noc99check() {
+  cat << EOF > conftest.c
+#include <stdio.h>
+int main(void){long long l;for (int i=0;i<1;i++)printf("%s",__func__);return 0;}
+EOF
+  $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
+  if [ $? -eq 0 ] ; then
+    rm -f conftest conftest.o conftest.c
+    return 0
+  else
+    rm -f conftest conftest.o conftest.c
+    return 1
+  fi
+}
+
 noreturncheck() {
   cat << EOF > conftest.c
 #include <stdlib.h>
-__attribute__((__noreturn__)) usage(void){exit(1);}int main(void){usage();return 0;}
+__attribute__((__noreturn__)) void usage(void){exit(1);}int main(void){usage();return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
@@ -392,9 +467,16 @@ EOF
   fi
 }
 
+# Intentionally fail on Android.
+# Avoids header/library mismatches as found on
+#   (at least) Termux. Doesn't hurt to use the
+#   portable reallocarray in this repo.
 reallocarraycheck() {
   cat << EOF > conftest.c
 #include <stdlib.h>
+#ifdef __ANDROID__
+00ThisWillDefinitelyFail00
+#endif
 int main(void){reallocarray(NULL, 0, 0);return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
@@ -412,7 +494,7 @@ setresgidcheck() {
   cat << EOF > conftest.c
 #include <sys/types.h>
 #include <unistd.h>
-int main(void){setresgid(NULL, NULL, NULL);return 0;}
+int main(void){setresgid(0, 0, 0);return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
@@ -429,7 +511,7 @@ setresuidcheck() {
   cat << EOF > conftest.c
 #include <sys/types.h>
 #include <unistd.h>
-int main(void){setresuid(NULL, NULL, NULL);return 0;}
+int main(void){setresuid(0, 0, 0);return 0;}
 EOF
   $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
   $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
@@ -640,6 +722,22 @@ EOF
   fi
 }
 
+timerclearcheck() {
+  cat << EOF > conftest.c
+#include <sys/time.h>
+int main(void){struct timeval a;timerclear(&a);return 0;}
+EOF
+  $cc $cflags -o conftest.o -c conftest.c > /dev/null 2>&1
+  $cc $ldflags -o conftest conftest.o > /dev/null 2>&1
+  if [ $? -eq 0 ] ; then
+    rm -f conftest conftest.o conftest.c
+    return 0
+  else
+    rm -f conftest conftest.o conftest.c
+    return 1
+  fi
+}
+
 timersubcheck() {
   cat << EOF > conftest.c
 #include <sys/time.h>
@@ -657,6 +755,9 @@ EOF
 }
 
 wflagcheck() {
+  if [ "x$cc" = "xkefir" ] ; then
+    return 0
+  fi
   cat << EOF > conftest.c
 int main(void){return 0;}
 EOF
@@ -690,13 +791,15 @@ curses=1
 instsh=0
 static=0
 lto=0
+small=0
+strip=1
 
 # Options
 for opt
 do
   case "$opt" in
     --prefix=*)
-	prefix=`echo $opt | cut -d '=' -f 2`
+	prefix=${opt#*=}
 	if [ $bindirset -eq 0 ] ; then
 	  bindir="$prefix/bin"
 	fi
@@ -705,12 +808,18 @@ do
 	fi
 	;;
     --bindir=*)
-	bindir=`echo $opt | cut -d '=' -f 2`
+	bindir=${opt#*=}
 	bindirset=1
 	;;
     --mandir=*)
-	mandir=`echo $opt | cut -d '=' -f 2`
+	mandir=${opt#*=}
 	mandirset=1
+	;;
+    --cc=*)
+	CC=${opt#*=}
+	;;
+    --cflags=*)
+	CFLAGS=${opt#*=}
 	;;
     --disable-curses|--enable-curses)
 	if [ "x$opt" = "x--disable-curses" ] ; then
@@ -733,6 +842,14 @@ do
 	  instsh=0
 	fi
 	;;
+    --disable-small|--enable-small)
+	if [ "x$opt" = "x--enable-small" ] ; then
+	  small=1
+	  curses=0
+	else
+	  small=0
+	fi
+	;;
     --disable-static|--enable-static)
 	if [ "x$opt" = "x--enable-static" ] ; then
 	  static=1
@@ -753,6 +870,9 @@ do
     --no-link)
 	compileonly=1
 	;;
+    --no-strip)
+	strip=0
+	;;
     --help|-h)
 	echo "Usage: configure [options]"
 	echo ""
@@ -765,6 +885,10 @@ do
 	echo "Install executable to BINDIR [$bindir]"
 	printf "  --mandir=MANDIR         "
 	echo "Install manual pages to MANDIR [$mandir]"
+	printf "  --cc=CC                 "
+	echo "Use specified C compiler [default=cc]"
+	printf "  --cflags=CFLAGS         "
+        echo "Use specified CFLAGS [default=\"-g -O2\"]"
 	printf "  --enable-curses         "
 	echo "Use curses library for screen clear [default=yes]"
 	printf "  --enable-ksh            "
@@ -773,12 +897,16 @@ do
 	echo "Enable link-time optimization [default=no]"
 	printf "  --enable-sh             "
 	echo "Install additional sh executable [default=no]"
+	printf "  --enable-small          "
+	echo "Disable curses and extended history [default=no]"
 	printf "  --enable-static         "
 	echo "Statically link executables [default=no]"
 	printf "  --no-thanks             "
 	echo "Skip all configure checks"
 	printf "  --no-link               "
 	echo "Compile only, do not link (requires --no-thanks)"
+	printf "  --no-strip              "
+	echo "Do not strip executables at install [default=strip]"
 	exit 1
 	;;
     *)
@@ -793,13 +921,13 @@ else
 fi
 
 if [ ! -z "$LDFLAGS" ] ; then
-  ldflags="$LDFLAGS "
+  ldflags="$LDFLAGS"
 else
   ldflags=""
 fi
 
 if [ $static -ne 0 ] ; then
-  ldflags="${ldflags}-static"
+  ldflags="$ldflags -static"
 fi
 
 if [ $compileonly -eq 1 ] ; then
@@ -848,6 +976,7 @@ if [ $doconfigure -eq 0 ] ; then
 /* #define HAVE_SIGLIST */
 /* #define HAVE_SIGNAME */
 /* #define HAVE_TIMERADD */
+/* #define HAVE_TIMERCLEAR */
 /* #define HAVE_TIMERSUB */
 EOF
   Makefile
@@ -865,26 +994,18 @@ else
   echo "$cc"
 fi
 
-printf "checking if C compiler can compile C99 without -std=c99... "
-c99check
-if [ $? -ne 0 ] ; then
-  echo "no"
-  printf "checking if C compiler can compile C99 with -std=c99... "
-  cflags="$cflags -std=c99"
-  c99check
-  if [ $? -ne 0 ] ; then
-    echo "no"
-    echo "You must have a C99 compiler to build oksh!"
-    exit 1
-  else
-    echo "yes"
-  fi
-else
-  echo "yes"
+if [ "x$cc" = "xvc" ] ; then
+  echo "using vbcc, setting CFLAGS to -g -O=990"
+  cflags="-g -O=990 -DEMACS -DVI"
+fi
+
+if [ "x$cc" = "xkefir" ] ; then
+  echo "using kefir, setting CFLAGS to -O2"
+  cflags="-O2 -DEMACS -DVI"
 fi
 
 if [ "x$cflags" = "x-DEMACS -DVI" ] ; then
-  printf "checking if the compiler understands -g -O2... "
+  printf "checking if the compiler accepts -g -O2... "
   defaultcflagscheck
   if [ $? -eq 0 ] ; then
     echo "no"
@@ -892,6 +1013,33 @@ if [ "x$cflags" = "x-DEMACS -DVI" ] ; then
     cflags="-g -O2 $cflags"
     echo "yes"
   fi
+fi
+
+printf "checking if the compiler can compile C99 without -std=c99... "
+noc99check
+if [ $? -ne 0 ] ; then
+  echo "no"
+  printf "checking if the compiler can compile C99 with -std=c99... "
+  cflags="$cflags"
+  c99check
+  if [ $? -ne 0 ] ; then
+    echo "no"
+    printf "checking if the compiler can compile C99 with -std=gnu99... "
+    gnu99check
+    if [ $? -ne 0 ] ; then
+      echo "no"
+      echo "You must have a C99 compiler to build oksh!"
+      exit 1
+    else
+      cflags="$cflags -std=gnu99"
+      echo "yes"
+    fi
+  else
+    cflags="$cflags -std=c99"
+    echo "yes"
+  fi
+else
+  echo "yes"
 fi
 
 printf "checking for -w compiler flag... "
@@ -914,6 +1062,26 @@ case "x$os" in
   "xNetBSD")
     cflags="$cflags -D_OPENBSD_SOURCE"
     ;;
+  "xOpenBSD")
+    case "x$cc" in
+      "xccomp")
+	cflags="$cflags -D_ANSI_LIBRARY"
+	ldflags="$ldflags -Wl,-nopie"
+	;;
+      "xchibicc")
+	cflags="$cflags -D_ANSI_LIBRARY"
+	;;
+      "xkefir")
+	cflags="$cflags -D_ANSI_LIBRARY"
+	;;
+      "xnwcc")
+	ldflags="$ldflags -Wl,-nopie"
+	;;
+      "xvc")
+	cflags="$cflags -D_ANSI_LIBRARY"
+	;;
+    esac
+    ;;
   "xAIX"|"xOS400")
     cflags="$cflags -D_ALL_SOURCE"
     ldflags="-lbsd"
@@ -932,6 +1100,10 @@ else
     ldflags="$ldflags -flto -Wl,-O3"
     echo "yes"
   fi
+fi
+
+if [ $small -ne 0 ] ; then
+  cflags="$cflags -DSMALL"
 fi
 
 cat << EOF > pconfig.h
@@ -958,8 +1130,8 @@ else
       echo "#define __dead __attribute__((__noreturn__))" >> pconfig.h
       echo "yes"
     else
-      echo "#define __dead" >> pconfig.h
       echo "#define __attribute__(x)" >> pconfig.h
+      echo "#define __dead" >> pconfig.h
       echo "no"
     fi
   fi
@@ -987,8 +1159,14 @@ else
     echo "yes"
   else
     echo "no"
-    echo "Error: oksh requires clock_gettime()"
-    exit 1
+    printf "checking if we are Mac OS X 10.11 or older... "
+    clockgettimemacoscheck
+    if [ $? -eq 0 ] ; then
+      echo "yes"
+    else
+      echo "Error: oksh requires clock_gettime()"
+      exit 1
+    fi
   fi
 fi
 
@@ -1194,6 +1372,15 @@ else
   echo "no"
 fi
 
+printf "checking for timerclear... "
+timerclearcheck
+if [ $? -eq 0 ] ; then
+  echo "#define HAVE_TIMERCLEAR" >> pconfig.h
+  echo "yes"
+else
+  echo "no"
+fi
+
 printf "checking for timersub... "
 timersubcheck
 if [ $? -eq 0 ] ; then
@@ -1201,6 +1388,25 @@ if [ $? -eq 0 ] ; then
   echo "yes"
 else
   echo "no"
+fi
+
+printf "checking for out-of-tree build... "
+if [ "x$(dirname $0)" = "x." ] ; then
+  echo "no"
+elif [ "x$(dirname $0)" = "x$(pwd)" ] ; then
+  echo "no"
+else
+  echo "yes"
+  vpath="$(dirname $0)"
+  cflags="$cflags -I$(pwd)"
+fi
+
+if [ ! -z "$cflags" ] ; then
+  cflags="${cflags## }"
+fi
+
+if [ ! -z "$ldflags" ] ; then
+  ldflags="${ldflags## }"
 fi
 
 printf "creating Makefile... "

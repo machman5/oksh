@@ -1,4 +1,4 @@
-/*	$OpenBSD: emacs.c,v 1.87 2020/05/08 14:30:42 jca Exp $	*/
+/*	$OpenBSD: emacs.c,v 1.90 2023/06/21 22:22:08 millert Exp $	*/
 
 /*
  *  Emacs-like command line editing and history
@@ -39,10 +39,6 @@
 
 static	Area	aedit;
 #define	AEDIT	&aedit		/* area for kill ring and macro defns */
-
-#undef CTRL
-#define	CTRL(x)		((x) == '?' ? 0x7F : (x) & 0x1F)	/* ASCII */
-#define	UNCTRL(x)	((x) == 0x7F ? '?' : (x) | 0x40)	/* ASCII */
 
 /* values returned by keyboard functions */
 #define	KSTD	0
@@ -277,7 +273,7 @@ static const struct x_ftab x_ftab[] = {
 	{ 0, 0, 0 },
 };
 
-int
+static int
 isu8cont(unsigned char c)
 {
 	return (c & (0x80 | 0x40)) == 0x80;
@@ -905,7 +901,7 @@ x_search_hist(int c)
 		if ((c = x_e_getc()) < 0)
 			return KSTD;
 		f = kb_find_hist_func(c);
-		if (c == CTRL('[')) {
+		if (c == CTRL('[') || c == CTRL('@')) {
 			x_e_ungetc(c);
 			break;
 		} else if (f == x_search_hist)
@@ -1859,11 +1855,17 @@ x_e_getu8(char *buf, int off)
 		return -1;
 	buf[off++] = c;
 
-	if (c == 0xf4)
+	/*
+	 * In the following, comments refer to violations of
+	 * the inequality tests at the ends of the lines.
+	 * See the utf8(7) manual page for details.
+	 */
+
+	if ((c & 0xf8) == 0xf0 && c < 0xf5)  /* beyond Unicode */
 		len = 4;
 	else if ((c & 0xf0) == 0xe0)
 		len = 3;
-	else if ((c & 0xe0) == 0xc0 && c > 0xc1)
+	else if ((c & 0xe0) == 0xc0 && c > 0xc1)  /* use single byte */
 		len = 2;
 	else
 		len = 1;
@@ -1873,9 +1875,10 @@ x_e_getu8(char *buf, int off)
 		if (cc == -1)
 			break;
 		if (isu8cont(cc) == 0 ||
-		    (c == 0xe0 && len == 3 && cc < 0xa0) ||
-		    (c == 0xed && len == 3 && cc & 0x20) ||
-		    (c == 0xf4 && len == 4 && cc & 0x30)) {
+		    (c == 0xe0 && len == 3 && cc < 0xa0) ||  /* use 2 bytes */
+		    (c == 0xed && len == 3 && cc > 0x9f) ||  /* surrogates  */
+		    (c == 0xf0 && len == 4 && cc < 0x90) ||  /* use 3 bytes */
+		    (c == 0xf4 && len == 4 && cc > 0x8f)) {  /* beyond Uni. */
 			x_e_ungetc(cc);
 			break;
 		}
